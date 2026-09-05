@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline Text Encryptor</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f5f5f7;
+            color: #1d1d1f;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        h2 { margin-top: 0; }
+        label { display: block; margin: 15px 0 5px; font-weight: 600; }
+        textarea, input {
+            width: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        textarea { height: 100px; resize: vertical; }
+        .actions { display: flex; gap: 10px; margin-top: 20px; }
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-encrypt { background-color: #0071e3; color: white; }
+        .btn-encrypt:hover { background-color: #005bb5; }
+        .btn-decrypt { background-color: #34c759; color: white; }
+        .btn-decrypt:hover { background-color: #28a745; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🔒 Offline Text Encryptor</h2>
+    
+    <label for="secretKey">Secret Key / Password</label>
+    <input type="password" id="secretKey" placeholder="Enter a strong password">
+
+    <label for="inputText">Input Text (Plaintext or Ciphertext)</label>
+    <textarea id="inputText" placeholder="Type text to encrypt or paste encrypted text to decrypt..."></textarea>
+
+    <div class="actions">
+        <button class="btn-encrypt" onclick="processText(true)">Encrypt</button>
+        <button class="btn-decrypt" onclick="processText(false)">Decrypt</button>
+    </div>
+
+    <label for="outputText">Result</label>
+    <textarea id="outputText" readonly placeholder="Your result will appear here..."></textarea>
+</div>
+
+<script>
+    // Helper: Derive a secure cryptographic key from a plain password string
+    async function deriveKey(password, salt) {
+        const encoder = new TextEncoder();
+        const baseKey = await window.crypto.subtle.importKey(
+            "raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+        );
+        return window.crypto.subtle.deriveKey(
+            { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+            baseKey,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["encrypt", "decrypt"]
+        );
+    }
+
+    async function processText(isEncrypt) {
+        const password = document.getElementById("secretKey").value;
+        const text = document.getElementById("inputText").value;
+        const outputField = document.getElementById("outputText");
+
+        if (!password || !text) {
+            alert("Please fill in both the Secret Key and Input Text fields.");
+            return;
+        }
+
+        try {
+            if (isEncrypt) {
+                // 1. Generate random Salt and Initialization Vector (IV)
+                const salt = window.crypto.getRandomValues(new Uint8Array(16));
+                const iv = window.crypto.getRandomValues(new Uint8Array(12));
+                const key = await deriveKey(password, salt);
+                
+                // 2. Encrypt the data
+                const encoder = new TextEncoder();
+                const encrypted = await window.crypto.subtle.encrypt(
+                    { name: "AES-GCM", iv: iv }, key, encoder.encode(text)
+                );
+
+                // 3. Package salt + iv + ciphertext together into a single string
+                const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+                combined.set(salt, 0);
+                combined.set(iv, salt.length);
+                combined.set(new Uint8Array(encrypted), salt.length + iv.length);
+
+                // 4. Output as safe Base64 text
+                outputField.value = btoa(String.fromCharCode(...combined));
+            } else {
+                // 1. Decode the Base64 string back to binary data
+                const combined = new Uint8Array(atob(text).split("").map(c => c.charCodeAt(0)));
+                
+                // 2. Extract salt, iv, and the actual encrypted text
+                const salt = combined.slice(0, 16);
+                const iv = combined.slice(16, 28);
+                const encrypted = combined.slice(28);
+
+                // 3. Re-derive the key and decrypt
+                const key = await deriveKey(password, salt);
+                const decrypted = await window.crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: iv }, key, encrypted
+                );
+
+                const decoder = new TextDecoder();
+                outputField.value = decoder.decode(decrypted);
+            }
+        } catch (error) {
+            alert("Error: Decryption failed. Please check your key or input text.");
+            console.error(error);
+        }
+    }
+</script>
+
+</body>
+</html>
